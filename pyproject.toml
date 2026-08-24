@@ -7,7 +7,9 @@ authors = [
     { name = "Abhishek Dutta", email = "abhishek.dutta1337@gmail.com" }
 ]
 requires-python = ">=3.13,<3.14"
-dependencies = []
+dependencies = [
+    "pydantic>=2.13.4",
+]
 
 [project.scripts]
 atlasrag = "atlasrag:main"
