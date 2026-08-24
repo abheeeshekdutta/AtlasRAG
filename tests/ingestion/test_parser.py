@@ -13,6 +13,7 @@ from atlasrag.ingestion.models import DocumentFormat, DocumentSource
 from atlasrag.ingestion.parser import (
     DoclingParser,
     DocumentParsingError,
+    ParsedDocument,
 )
 
 
@@ -79,3 +80,27 @@ def test_docling_parser_translates_conversion_failure(
         DoclingParser().parse(loaded)
 
     assert captured.value.__cause__ is not None
+
+
+def test_parsed_document_round_trips_through_json() -> None:
+    path = Path("tests/fixtures/documents/security_policy.md")
+    source = DocumentSource(
+        source_namespace="test-fixtures",
+        source_key="security/policy",
+    )
+    loaded = load_local_document(
+        path=path,
+        source=source,
+    )
+    original = DoclingParser().parse(loaded)
+
+    serialized = original.model_dump_json(
+        exclude_computed_fields=True,
+    )
+    restored = ParsedDocument.model_validate_json(serialized)
+
+    assert restored.schema_version == 1
+    assert restored.version == original.version
+    assert restored.parser_name == original.parser_name
+    assert restored.parser_version == original.parser_version
+    assert restored.document.model_dump() == original.document.model_dump()

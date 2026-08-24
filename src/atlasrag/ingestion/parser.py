@@ -1,6 +1,6 @@
-from dataclasses import dataclass
 from importlib.metadata import version as distribution_version
 from io import BytesIO
+from typing import Literal
 
 from docling.datamodel.base_models import (
     ConversionStatus,
@@ -10,6 +10,7 @@ from docling.datamodel.base_models import (
 from docling.document_converter import DocumentConverter
 from docling.exceptions import ConversionError
 from docling_core.types.doc.document import DoclingDocument
+from pydantic import BaseModel, ConfigDict
 
 from atlasrag.ingestion.loader import LoadedDocument
 from atlasrag.ingestion.models import DocumentVersion
@@ -19,10 +20,15 @@ class DocumentParsingError(RuntimeError):
     """Raised when a document cannot be converted completely."""
 
 
-@dataclass(frozen=True, slots=True)
-class ParsedDocument:
+class ParsedDocument(BaseModel):
     """A parsed document coupled to its source-version lineage."""
 
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+    )
+
+    schema_version: Literal[1] = 1
     version: DocumentVersion
     parser_name: str
     parser_version: str
