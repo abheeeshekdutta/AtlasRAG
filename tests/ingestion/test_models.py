@@ -95,3 +95,42 @@ def test_document_version_rejects_negative_size() -> None:
             content_sha256=content_sha256,
             size_bytes=-1,
         )
+
+
+def test_document_version_serializes_with_derived_ids() -> None:
+    source = DocumentSource(
+        source_namespace="local-manifest",
+        source_key="security/policy",
+    )
+    version = DocumentVersion.from_content(
+        source=source,
+        source_format=DocumentFormat.MARKDOWN,
+        content=b"Security policy",
+    )
+
+    payload = version.model_dump(mode="json")
+
+    assert payload["source"]["document_id"] == str(source.document_id)
+    assert payload["document_version_id"] == str(version.document_version_id)
+    assert payload["source_format"] == "markdown"
+
+
+def test_document_version_round_trips_through_canonical_json() -> None:
+    source = DocumentSource(
+        source_namespace="local-manifest",
+        source_key="security/policy",
+    )
+    original = DocumentVersion.from_content(
+        source=source,
+        source_format=DocumentFormat.MARKDOWN,
+        content=b"Security policy",
+    )
+
+    serialized = original.model_dump_json(
+        exclude_computed_fields=True,
+    )
+    restored = DocumentVersion.model_validate_json(serialized)
+
+    assert restored == original
+    assert restored.source.document_id == original.source.document_id
+    assert restored.document_version_id == original.document_version_id
