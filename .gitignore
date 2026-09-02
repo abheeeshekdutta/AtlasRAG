@@ -8,6 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+.env
+
+# Local AtlasRAG artifacts
+.atlasrag/
 
 # Test, lint, and type-check caches
 .pytest_cache/

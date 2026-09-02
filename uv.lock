@@ -70,6 +70,7 @@ dependencies = [
     { name = "docling" },
     { name = "openai" },
     { name = "pydantic" },
+    { name = "python-dotenv" },
     { name = "sentence-transformers" },
 ]
 
@@ -85,6 +86,7 @@ requires-dist = [
     { name = "docling", specifier = ">=2.121.0" },
     { name = "openai", specifier = ">=3.6.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
+    { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "sentence-transformers", specifier = ">=6.0.1" },
 ]
 

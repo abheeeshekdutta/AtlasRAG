@@ -1,10 +1,11 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from atlasrag.answering.context import RetrievedContext
-from atlasrag.cli import main
+from atlasrag.cli import load_project_environment, main
 from atlasrag.ingestion.embedder import EmbeddingConfig
 
 
@@ -46,6 +47,7 @@ class CliTestGenerator:
 
 @pytest.fixture
 def fake_local_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
     monkeypatch.setattr(
         "atlasrag.ingestion.sentence_transformer_embedder.SentenceTransformerEmbedder",
         CliTestEmbedder,
@@ -145,6 +147,25 @@ def test_cli_reports_missing_artifact_root(
     assert status == 1
     assert captured.out == ""
     assert "Artifact root does not exist" in captured.err
+
+
+def test_cli_loads_dotenv_without_overriding_exported_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "OPENAI_API_KEY=from-dotenv\nATLASRAG_OPENAI_MODEL=from-dotenv-model\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "already-exported")
+    monkeypatch.delenv("ATLASRAG_OPENAI_MODEL", raising=False)
+
+    loaded = load_project_environment(env_file)
+
+    assert loaded
+    assert os.environ["OPENAI_API_KEY"] == "already-exported"
+    assert os.environ["ATLASRAG_OPENAI_MODEL"] == "from-dotenv-model"
 
 
 @pytest.mark.parametrize(

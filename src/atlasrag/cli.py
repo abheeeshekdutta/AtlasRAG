@@ -1,8 +1,11 @@
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 DEFAULT_ARTIFACT_ROOT = Path(".atlasrag/artifacts")
 
@@ -38,7 +41,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     ask = commands.add_parser("ask", help="Answer from ingested documents")
     _add_retrieval_arguments(ask)
-    ask.add_argument("--model", required=True, help="OpenAI model ID")
+    ask.add_argument(
+        "--model",
+        help="OpenAI model ID (default: ATLASRAG_OPENAI_MODEL from the environment)",
+    )
     ask.add_argument("--max-output-tokens", type=_positive_int, default=800)
 
     return parser
@@ -46,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the AtlasRAG command-line application."""
+    load_project_environment()
     arguments = build_parser().parse_args(argv)
 
     try:
@@ -150,6 +157,12 @@ def _run_ask(arguments: argparse.Namespace) -> int:
     )
     from atlasrag.retrieval.artifact_corpus import load_artifact_corpus
 
+    model = _resolve_openai_model(arguments.model)
+    if not os.environ.get("OPENAI_API_KEY", "").strip():
+        raise ValueError(
+            "OPENAI_API_KEY was not found in the environment or project .env file"
+        )
+
     embedder = SentenceTransformerEmbedder()
     corpus = load_artifact_corpus(
         artifact_root=arguments.artifacts,
@@ -158,7 +171,7 @@ def _run_ask(arguments: argparse.Namespace) -> int:
     service = RagService(
         retriever=corpus.index,
         generator=OpenAIAnswerGenerator(
-            model=arguments.model,
+            model=model,
             max_output_tokens=arguments.max_output_tokens,
         ),
         context_builder=ContextBuilder(ContextConfig(max_chunks=arguments.top_k)),
@@ -172,7 +185,7 @@ def _run_ask(arguments: argparse.Namespace) -> int:
         {
             "query": result.query,
             "answer": result.answer,
-            "model": arguments.model,
+            "model": model,
             "citations": [
                 {
                     "label": citation.label,
@@ -199,6 +212,22 @@ def _add_retrieval_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--top-k", type=_positive_int, default=5)
     parser.add_argument("--minimum-score", type=_score, default=-1.0)
+
+
+def load_project_environment(env_file: Path | None = None) -> bool:
+    """Load project environment variables without replacing exported values."""
+    path = env_file or Path.cwd() / ".env"
+    return load_dotenv(dotenv_path=path, override=False)
+
+
+def _resolve_openai_model(command_line_model: str | None) -> str:
+    model = command_line_model or os.environ.get("ATLASRAG_OPENAI_MODEL", "")
+    if not model.strip():
+        raise ValueError(
+            "OpenAI model was not provided; use --model or set "
+            "ATLASRAG_OPENAI_MODEL in .env"
+        )
+    return model
 
 
 def _positive_int(value: str) -> int:
