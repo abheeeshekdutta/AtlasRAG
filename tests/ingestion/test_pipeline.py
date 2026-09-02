@@ -21,6 +21,7 @@ class FakeEmbedder:
         self.config = EmbeddingConfig(
             provider="test",
             model="deterministic-v1",
+            model_revision="revision-1",
             dimensions=3,
         )
         self.provider_version = "1.0.0"

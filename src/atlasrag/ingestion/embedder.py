@@ -18,6 +18,7 @@ class EmbeddingConfig(BaseModel):
 
     provider: str
     model: str
+    model_revision: str
     dimensions: int = Field(gt=0)
     normalize: bool = True
 
@@ -27,6 +28,8 @@ class EmbeddingConfig(BaseModel):
             raise ValueError("provider must not be blank")
         if not self.model.strip():
             raise ValueError("model must not be blank")
+        if not self.model_revision.strip():
+            raise ValueError("model_revision must not be blank")
         return self
 
 

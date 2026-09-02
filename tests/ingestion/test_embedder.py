@@ -27,6 +27,7 @@ class RecordingEmbedder:
         self.config = EmbeddingConfig(
             provider="test-provider",
             model="test-model",
+            model_revision="revision-1",
             dimensions=dimensions,
         )
         self.provider_version = "1.2.3"
@@ -60,12 +61,13 @@ def chunked_policy() -> ChunkedDocument:
     return DoclingHybridChunker().chunk(DoclingParser().parse(loaded))
 
 
-@pytest.mark.parametrize("field", ["provider", "model"])
+@pytest.mark.parametrize("field", ["provider", "model", "model_revision"])
 @pytest.mark.parametrize("value", ["", "   "])
 def test_embedding_config_rejects_blank_names(field: str, value: str) -> None:
     data = {
         "provider": "test-provider",
         "model": "test-model",
+        "model_revision": "revision-1",
         "dimensions": 3,
     }
     data[field] = value
@@ -75,7 +77,12 @@ def test_embedding_config_rejects_blank_names(field: str, value: str) -> None:
 
 
 def test_embedder_fingerprint_is_deterministic_and_configuration_sensitive() -> None:
-    config = EmbeddingConfig(provider="test", model="model-a", dimensions=3)
+    config = EmbeddingConfig(
+        provider="test",
+        model="model-a",
+        model_revision="revision-1",
+        dimensions=3,
+    )
 
     first = create_embedder_fingerprint(config, provider_version="1.0")
     repeated = create_embedder_fingerprint(config, provider_version="1.0")
