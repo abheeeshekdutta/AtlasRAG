@@ -48,6 +48,24 @@ class FakeSentenceTransformer:
             ]
         )
 
+    def encode_query(
+        self,
+        sentences: list[str],
+        *,
+        show_progress_bar: bool,
+        convert_to_numpy: bool,
+        normalize_embeddings: bool,
+    ) -> FakeMatrix:
+        self.calls.append(
+            {
+                "query_sentences": sentences,
+                "show_progress_bar": show_progress_bar,
+                "convert_to_numpy": convert_to_numpy,
+                "normalize_embeddings": normalize_embeddings,
+            }
+        )
+        return FakeMatrix([[0.25, 0.5, 0.75]])
+
 
 def test_sentence_transformer_embedder_exposes_reproducible_configuration() -> None:
     embedder = SentenceTransformerEmbedder(
@@ -99,6 +117,40 @@ def test_sentence_transformer_embedder_skips_empty_batches() -> None:
 
     assert embedder.embed_documents(()) == ()
     assert model.calls == []
+
+
+def test_sentence_transformer_embedder_uses_query_encoding() -> None:
+    model = FakeSentenceTransformer()
+    embedder = SentenceTransformerEmbedder(
+        model_name="organization/model",
+        model_revision="abc123",
+        normalize=True,
+        model=model,
+    )
+
+    result = embedder.embed_query("incident reporting")
+
+    assert result == (0.25, 0.5, 0.75)
+    assert model.calls == [
+        {
+            "query_sentences": ["incident reporting"],
+            "show_progress_bar": False,
+            "convert_to_numpy": True,
+            "normalize_embeddings": True,
+        }
+    ]
+
+
+@pytest.mark.parametrize("query", ["", "   "])
+def test_sentence_transformer_embedder_rejects_blank_query(query: str) -> None:
+    embedder = SentenceTransformerEmbedder(
+        model_name="organization/model",
+        model_revision="abc123",
+        model=FakeSentenceTransformer(),
+    )
+
+    with pytest.raises(ValueError, match="query text must not be blank"):
+        embedder.embed_query(query)
 
 
 @pytest.mark.parametrize(

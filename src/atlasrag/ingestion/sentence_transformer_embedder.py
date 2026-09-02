@@ -26,6 +26,15 @@ class _SentenceTransformerModel(Protocol):
         normalize_embeddings: bool,
     ) -> _EmbeddingMatrix: ...
 
+    def encode_query(
+        self,
+        sentences: list[str],
+        *,
+        show_progress_bar: bool,
+        convert_to_numpy: bool,
+        normalize_embeddings: bool,
+    ) -> _EmbeddingMatrix: ...
+
 
 class SentenceTransformerEmbedder:
     """Generate local document embeddings with Sentence Transformers."""
@@ -87,3 +96,18 @@ class SentenceTransformerEmbedder:
             normalize_embeddings=self.config.normalize,
         )
         return tuple(tuple(float(value) for value in row) for row in matrix.tolist())
+
+    def embed_query(self, text: str) -> tuple[float, ...]:
+        if not text.strip():
+            raise ValueError("query text must not be blank")
+
+        matrix = self._model.encode_query(
+            [text],
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            normalize_embeddings=self.config.normalize,
+        )
+        rows = matrix.tolist()
+        if len(rows) != 1:
+            raise ValueError(f"Model returned {len(rows)} vectors for one query")
+        return tuple(float(value) for value in rows[0])

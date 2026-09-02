@@ -63,6 +63,15 @@ class DocumentEmbedder(Protocol):
     ) -> tuple[tuple[float, ...], ...]: ...
 
 
+class QueryEmbedder(Protocol):
+    """Provider-neutral boundary for query embedding implementations."""
+
+    config: EmbeddingConfig
+    provider_version: str
+
+    def embed_query(self, text: str) -> tuple[float, ...]: ...
+
+
 class ChunkEmbedding(BaseModel):
     """Embedding vector coupled to the chunk that produced it."""
 
