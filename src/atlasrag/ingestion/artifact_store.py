@@ -1,13 +1,10 @@
 from pathlib import Path
 
+from atlasrag.ingestion.chunker import ChunkedDocument
 from atlasrag.ingestion.parser import ParsedDocument
 
 
-def save_parsed_document(
-    parsed: ParsedDocument,
-    destination: Path,
-) -> None:
-    """Save a parsed document using a temporary file."""
+def _save_json(content: str, destination: Path) -> None:
     destination.parent.mkdir(
         parents=True,
         exist_ok=True,
@@ -16,18 +13,41 @@ def save_parsed_document(
     temporary = destination.with_name(f".{destination.name}.tmp")
 
     try:
-        temporary.write_text(
-            parsed.model_dump_json(
-                exclude_computed_fields=True,
-            ),
-            encoding="utf-8",
-        )
+        temporary.write_text(content, encoding="utf-8")
         temporary.replace(destination)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def save_parsed_document(
+    parsed: ParsedDocument,
+    destination: Path,
+) -> None:
+    """Save a parsed document using a temporary file."""
+    _save_json(
+        parsed.model_dump_json(exclude_computed_fields=True),
+        destination,
+    )
 
 
 def load_parsed_document(source: Path) -> ParsedDocument:
     """Load and validate a saved parsed document."""
     content = source.read_text(encoding="utf-8")
     return ParsedDocument.model_validate_json(content)
+
+
+def save_chunked_document(
+    chunked: ChunkedDocument,
+    destination: Path,
+) -> None:
+    """Save a chunk artifact using a temporary file."""
+    _save_json(
+        chunked.model_dump_json(exclude_computed_fields=True),
+        destination,
+    )
+
+
+def load_chunked_document(source: Path) -> ChunkedDocument:
+    """Load and validate a saved chunk artifact."""
+    content = source.read_text(encoding="utf-8")
+    return ChunkedDocument.model_validate_json(content)

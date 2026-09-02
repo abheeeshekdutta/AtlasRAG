@@ -1,13 +1,26 @@
+from importlib.metadata import version as distribution_version
+from pathlib import Path
 from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
 
 from atlasrag.ingestion.chunker import (
+    ChunkedDocument,
     ChunkingConfig,
+    DoclingHybridChunker,
     DocumentChunk,
+    DocumentChunkingError,
     create_chunker_fingerprint,
 )
+from atlasrag.ingestion.identity import create_chunk_id
+from atlasrag.ingestion.loader import load_local_document
+from atlasrag.ingestion.models import (
+    DocumentFormat,
+    DocumentSource,
+    DocumentVersion,
+)
+from atlasrag.ingestion.parser import DoclingParser, ParsedDocument
 
 
 def test_chunking_config_has_safe_defaults() -> None:
@@ -214,3 +227,288 @@ def test_document_chunk_is_immutable() -> None:
         match="Instance is frozen",
     ):
         chunk.text = "Changed text"
+
+
+def _valid_chunked_document() -> ChunkedDocument:
+    version = DocumentVersion.from_content(
+        source=DocumentSource(
+            source_namespace="test-fixtures",
+            source_key="security/policy",
+        ),
+        source_format=DocumentFormat.MARKDOWN,
+        content=b"security policy",
+    )
+    config = ChunkingConfig()
+    docling_version = "2.70.0"
+    fingerprint = create_chunker_fingerprint(
+        config,
+        docling_version=docling_version,
+    )
+    contextualized_text = (
+        "Security Incident Policy\nEmployees must report incidents immediately."
+    )
+    chunk = DocumentChunk(
+        chunk_id=create_chunk_id(
+            version.document_version_id,
+            fingerprint,
+            0,
+            contextualized_text,
+        ),
+        document_id=version.source.document_id,
+        document_version_id=version.document_version_id,
+        chunk_index=0,
+        text="Employees must report incidents immediately.",
+        contextualized_text=contextualized_text,
+        token_count=11,
+        headings=("Security Incident Policy",),
+        source_item_refs=("#/texts/1",),
+    )
+
+    return ChunkedDocument(
+        version=version,
+        config=config,
+        docling_version=docling_version,
+        chunker_fingerprint=fingerprint,
+        chunks=(chunk,),
+    )
+
+
+def test_chunked_document_round_trips_through_json() -> None:
+    original = _valid_chunked_document()
+
+    restored = ChunkedDocument.model_validate_json(
+        original.model_dump_json(exclude_computed_fields=True)
+    )
+
+    assert restored == original
+    assert restored.schema_version == 1
+    assert restored.chunks[0].chunk_index == 0
+
+
+@pytest.mark.parametrize("docling_version", ["", "   "])
+def test_chunked_document_rejects_blank_docling_version(
+    docling_version: str,
+) -> None:
+    data = _valid_chunked_document().model_dump(exclude_computed_fields=True)
+    data["docling_version"] = docling_version
+
+    with pytest.raises(ValidationError, match="docling_version must not be blank"):
+        ChunkedDocument.model_validate(data)
+
+
+def test_chunked_document_rejects_empty_chunks() -> None:
+    data = _valid_chunked_document().model_dump(exclude_computed_fields=True)
+    data["chunks"] = ()
+
+    with pytest.raises(ValidationError, match="chunks must not be empty"):
+        ChunkedDocument.model_validate(data)
+
+
+@pytest.mark.parametrize("chunk_index", [1, 2])
+def test_chunked_document_rejects_noncontiguous_indexes(
+    chunk_index: int,
+) -> None:
+    data = _valid_chunked_document().model_dump(exclude_computed_fields=True)
+    data["chunks"][0]["chunk_index"] = chunk_index
+
+    with pytest.raises(
+        ValidationError,
+        match="chunk indexes must be contiguous and ordered",
+    ):
+        ChunkedDocument.model_validate(data)
+
+
+def test_chunked_document_rejects_wrong_fingerprint() -> None:
+    data = _valid_chunked_document().model_dump(exclude_computed_fields=True)
+    data["chunker_fingerprint"] = "0" * 64
+
+    with pytest.raises(
+        ValidationError,
+        match="chunker_fingerprint does not match the chunking configuration",
+    ):
+        ChunkedDocument.model_validate(data)
+
+
+def test_chunked_document_rejects_wrong_document_id() -> None:
+    data = _valid_chunked_document().model_dump(exclude_computed_fields=True)
+    data["chunks"][0]["document_id"] = UUID("16624b43-95c7-55d5-a277-ecec22198a2c")
+
+    with pytest.raises(
+        ValidationError,
+        match="chunk document_id does not match the document",
+    ):
+        ChunkedDocument.model_validate(data)
+
+
+def test_chunked_document_rejects_wrong_document_version_id() -> None:
+    data = _valid_chunked_document().model_dump(exclude_computed_fields=True)
+    data["chunks"][0]["document_version_id"] = UUID(
+        "cf0da800-84df-542f-bce8-4004d9dc42fd"
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="chunk document_version_id does not match the document version",
+    ):
+        ChunkedDocument.model_validate(data)
+
+
+def test_chunked_document_rejects_embedding_token_overflow() -> None:
+    data = _valid_chunked_document().model_dump(exclude_computed_fields=True)
+    data["chunks"][0]["token_count"] = 257
+
+    with pytest.raises(
+        ValidationError,
+        match="chunk exceeds the embedding token limit",
+    ):
+        ChunkedDocument.model_validate(data)
+
+
+def test_chunked_document_rejects_wrong_chunk_id() -> None:
+    data = _valid_chunked_document().model_dump(exclude_computed_fields=True)
+    data["chunks"][0]["chunk_id"] = UUID("c2f34067-4713-5ab8-8b91-b48cf594b96d")
+
+    with pytest.raises(
+        ValidationError,
+        match="chunk_id does not match the chunk content",
+    ):
+        ChunkedDocument.model_validate(data)
+
+
+@pytest.fixture(scope="module")
+def parsed_policy() -> ParsedDocument:
+    loaded = load_local_document(
+        path=Path("tests/fixtures/documents/security_policy.md"),
+        source=DocumentSource(
+            source_namespace="test-fixtures",
+            source_key="security/policy",
+        ),
+    )
+    return DoclingParser().parse(loaded)
+
+
+@pytest.fixture(scope="module")
+def chunked_policy(parsed_policy: ParsedDocument) -> ChunkedDocument:
+    return DoclingHybridChunker().chunk(parsed_policy)
+
+
+def test_docling_hybrid_chunker_preserves_structure_and_lineage(
+    parsed_policy: ParsedDocument,
+    chunked_policy: ChunkedDocument,
+) -> None:
+    assert chunked_policy.version == parsed_policy.version
+    assert chunked_policy.docling_version == distribution_version("docling-core")
+    assert len(chunked_policy.chunks) == 4
+    assert all(
+        chunk.document_id == parsed_policy.version.source.document_id
+        for chunk in chunked_policy.chunks
+    )
+    assert all(
+        chunk.document_version_id == parsed_policy.version.document_version_id
+        for chunk in chunked_policy.chunks
+    )
+
+    reporting_chunk = chunked_policy.chunks[1]
+    assert reporting_chunk.headings == (
+        "Security Incident Policy",
+        "Reporting procedure",
+    )
+    assert reporting_chunk.source_item_refs == (
+        "#/texts/3",
+        "#/texts/4",
+        "#/texts/5",
+    )
+    assert reporting_chunk.contextualized_text.startswith(
+        "Security Incident Policy\nReporting procedure"
+    )
+
+    table_chunk = chunked_policy.chunks[2]
+    assert table_chunk.source_item_refs == ("#/tables/0",)
+    assert "Active compromise" in table_chunk.text
+    assert all(not chunk.page_numbers for chunk in chunked_policy.chunks)
+
+
+def test_docling_hybrid_chunker_is_deterministic(
+    parsed_policy: ParsedDocument,
+    chunked_policy: ChunkedDocument,
+) -> None:
+    repeated = DoclingHybridChunker().chunk(parsed_policy)
+
+    assert repeated.chunker_fingerprint == chunked_policy.chunker_fingerprint
+    assert [chunk.chunk_id for chunk in repeated.chunks] == [
+        chunk.chunk_id for chunk in chunked_policy.chunks
+    ]
+    assert [chunk.contextualized_text for chunk in repeated.chunks] == [
+        chunk.contextualized_text for chunk in chunked_policy.chunks
+    ]
+
+
+def test_docling_hybrid_chunker_rejects_final_token_overflow(
+    parsed_policy: ParsedDocument,
+) -> None:
+    chunker = DoclingHybridChunker(
+        ChunkingConfig(
+            embedding_max_tokens=25,
+            chunk_max_tokens=25,
+        )
+    )
+
+    with pytest.raises(
+        DocumentChunkingError,
+        match=r"Chunk \d+ has \d+ tokens; the embedding limit is 25",
+    ):
+        chunker.chunk(parsed_policy)
+
+
+def test_docling_hybrid_chunker_splits_long_section(
+    tmp_path: Path,
+) -> None:
+    document_path = tmp_path / "long-policy.md"
+    body = " ".join(
+        f"Security control number {index} must be reviewed annually."
+        for index in range(50)
+    )
+    document_path.write_text(
+        f"# Long Security Policy\n\n{body}\n",
+        encoding="utf-8",
+    )
+    loaded = load_local_document(
+        path=document_path,
+        source=DocumentSource(
+            source_namespace="test-fixtures",
+            source_key="security/long-policy",
+        ),
+    )
+    parsed = DoclingParser().parse(loaded)
+    config = ChunkingConfig(
+        embedding_max_tokens=100,
+        chunk_max_tokens=40,
+    )
+
+    result = DoclingHybridChunker(config).chunk(parsed)
+
+    assert len(result.chunks) > 1
+    assert all(chunk.token_count <= config.chunk_max_tokens for chunk in result.chunks)
+    assert all(chunk.headings == ("Long Security Policy",) for chunk in result.chunks)
+    assert all(chunk.source_item_refs == ("#/texts/1",) for chunk in result.chunks)
+
+
+def test_docling_hybrid_chunker_rejects_document_without_content(
+    tmp_path: Path,
+) -> None:
+    document_path = tmp_path / "heading-only.md"
+    document_path.write_text("# Heading only\n", encoding="utf-8")
+    loaded = load_local_document(
+        path=document_path,
+        source=DocumentSource(
+            source_namespace="test-fixtures",
+            source_key="security/heading-only",
+        ),
+    )
+    parsed = DoclingParser().parse(loaded)
+
+    with pytest.raises(
+        DocumentChunkingError,
+        match="Docling produced no chunks",
+    ):
+        DoclingHybridChunker().chunk(parsed)
