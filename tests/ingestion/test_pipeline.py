@@ -2,15 +2,36 @@ from pathlib import Path
 
 from atlasrag.ingestion.artifact_store import (
     load_chunked_document,
+    load_embedded_document,
     load_parsed_document,
 )
 from atlasrag.ingestion.chunker import ChunkingConfig, DoclingHybridChunker
+from atlasrag.ingestion.embedder import EmbeddingConfig
 from atlasrag.ingestion.models import DocumentSource
 from atlasrag.ingestion.parser import DoclingParser
 from atlasrag.ingestion.pipeline import (
     build_chunk_artifact_path,
+    build_embedding_artifact_path,
     ingest_local_document,
 )
+
+
+class FakeEmbedder:
+    def __init__(self) -> None:
+        self.config = EmbeddingConfig(
+            provider="test",
+            model="deterministic-v1",
+            dimensions=3,
+        )
+        self.provider_version = "1.0.0"
+
+    def embed_documents(
+        self,
+        texts: tuple[str, ...],
+    ) -> tuple[tuple[float, ...], ...]:
+        return tuple(
+            (float(index), float(len(text)), 1.0) for index, text in enumerate(texts)
+        )
 
 
 def test_ingest_local_document_runs_complete_pipeline(
@@ -27,10 +48,12 @@ def test_ingest_local_document_runs_complete_pipeline(
         artifact_root=tmp_path / "artifacts",
         parser=DoclingParser(),
         chunker=DoclingHybridChunker(),
+        embedder=FakeEmbedder(),
     )
 
     assert result.artifact_path.exists()
     assert result.chunk_artifact_path.exists()
+    assert result.embedding_artifact_path.exists()
 
     assert str(result.parsed.version.source.document_id) in str(result.artifact_path)
     assert str(result.parsed.version.document_version_id) in str(result.artifact_path)
@@ -49,6 +72,17 @@ def test_ingest_local_document_runs_complete_pipeline(
         chunked=result.chunked,
     )
 
+    restored_embeddings = load_embedded_document(result.embedding_artifact_path)
+
+    assert restored_embeddings == result.embedded
+    assert [item.chunk_id for item in restored_embeddings.embeddings] == [
+        chunk.chunk_id for chunk in result.chunked.chunks
+    ]
+    assert result.embedding_artifact_path == build_embedding_artifact_path(
+        artifact_root=tmp_path / "artifacts",
+        embedded=result.embedded,
+    )
+
 
 def test_chunk_artifact_path_changes_with_chunking_configuration(
     tmp_path: Path,
@@ -63,6 +97,7 @@ def test_chunk_artifact_path_changes_with_chunking_configuration(
         artifact_root=tmp_path / "artifacts",
         parser=DoclingParser(),
         chunker=DoclingHybridChunker(),
+        embedder=FakeEmbedder(),
     )
     second = ingest_local_document(
         path=Path("tests/fixtures/documents/security_policy.md"),
@@ -70,6 +105,7 @@ def test_chunk_artifact_path_changes_with_chunking_configuration(
         artifact_root=tmp_path / "artifacts",
         parser=DoclingParser(),
         chunker=DoclingHybridChunker(ChunkingConfig(chunk_max_tokens=199)),
+        embedder=FakeEmbedder(),
     )
 
     assert first.chunk_artifact_path != second.chunk_artifact_path

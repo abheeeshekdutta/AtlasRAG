@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from atlasrag.ingestion.chunker import ChunkedDocument
+from atlasrag.ingestion.embedder import EmbeddedDocument
 from atlasrag.ingestion.parser import ParsedDocument
 
 
@@ -51,3 +52,20 @@ def load_chunked_document(source: Path) -> ChunkedDocument:
     """Load and validate a saved chunk artifact."""
     content = source.read_text(encoding="utf-8")
     return ChunkedDocument.model_validate_json(content)
+
+
+def save_embedded_document(
+    embedded: EmbeddedDocument,
+    destination: Path,
+) -> None:
+    """Save an embedding artifact using a temporary file."""
+    _save_json(
+        embedded.model_dump_json(exclude_computed_fields=True),
+        destination,
+    )
+
+
+def load_embedded_document(source: Path) -> EmbeddedDocument:
+    """Load and validate a saved embedding artifact."""
+    content = source.read_text(encoding="utf-8")
+    return EmbeddedDocument.model_validate_json(content)
