@@ -34,15 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     search = commands.add_parser("search", help="Search ingested documents")
-    search.add_argument("query", help="Natural-language search query")
-    search.add_argument(
-        "--artifacts",
-        type=Path,
-        default=DEFAULT_ARTIFACT_ROOT,
-        help=f"Artifact directory (default: {DEFAULT_ARTIFACT_ROOT})",
-    )
-    search.add_argument("--top-k", type=_positive_int, default=5)
-    search.add_argument("--minimum-score", type=_score, default=-1.0)
+    _add_retrieval_arguments(search)
+
+    ask = commands.add_parser("ask", help="Answer from ingested documents")
+    _add_retrieval_arguments(ask)
+    ask.add_argument("--model", required=True, help="OpenAI model ID")
+    ask.add_argument("--max-output-tokens", type=_positive_int, default=800)
 
     return parser
 
@@ -54,7 +51,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if arguments.command == "ingest":
             return _run_ingest(arguments)
-        return _run_search(arguments)
+        if arguments.command == "search":
+            return _run_search(arguments)
+        return _run_ask(arguments)
     except (OSError, ValueError, RuntimeError) as error:
         print(f"atlasrag: {error}", file=sys.stderr)
         return 1
@@ -140,6 +139,66 @@ def _run_search(arguments: argparse.Namespace) -> int:
         }
     )
     return 0
+
+
+def _run_ask(arguments: argparse.Namespace) -> int:
+    from atlasrag.answering.context import ContextBuilder, ContextConfig
+    from atlasrag.answering.openai_generator import OpenAIAnswerGenerator
+    from atlasrag.answering.service import RagService
+    from atlasrag.ingestion.sentence_transformer_embedder import (
+        SentenceTransformerEmbedder,
+    )
+    from atlasrag.retrieval.artifact_corpus import load_artifact_corpus
+
+    embedder = SentenceTransformerEmbedder()
+    corpus = load_artifact_corpus(
+        artifact_root=arguments.artifacts,
+        embedder=embedder,
+    )
+    service = RagService(
+        retriever=corpus.index,
+        generator=OpenAIAnswerGenerator(
+            model=arguments.model,
+            max_output_tokens=arguments.max_output_tokens,
+        ),
+        context_builder=ContextBuilder(ContextConfig(max_chunks=arguments.top_k)),
+    )
+    result = service.ask(
+        arguments.query,
+        top_k=arguments.top_k,
+        minimum_score=arguments.minimum_score,
+    )
+    _print_json(
+        {
+            "query": result.query,
+            "answer": result.answer,
+            "model": arguments.model,
+            "citations": [
+                {
+                    "label": citation.label,
+                    "source_namespace": citation.source_namespace,
+                    "source_key": citation.source_key,
+                    "headings": citation.headings,
+                    "page_numbers": citation.page_numbers,
+                    "chunk_id": str(citation.chunk_id),
+                }
+                for citation in result.citations
+            ],
+        }
+    )
+    return 0
+
+
+def _add_retrieval_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("query", help="Natural-language query")
+    parser.add_argument(
+        "--artifacts",
+        type=Path,
+        default=DEFAULT_ARTIFACT_ROOT,
+        help=f"Artifact directory (default: {DEFAULT_ARTIFACT_ROOT})",
+    )
+    parser.add_argument("--top-k", type=_positive_int, default=5)
+    parser.add_argument("--minimum-score", type=_score, default=-1.0)
 
 
 def _positive_int(value: str) -> int:

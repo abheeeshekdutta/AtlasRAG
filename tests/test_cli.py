@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from atlasrag.answering.context import RetrievedContext
 from atlasrag.cli import main
 from atlasrag.ingestion.embedder import EmbeddingConfig
 
@@ -34,11 +35,24 @@ class CliTestEmbedder:
         return (1.0, 0.0, 0.0)
 
 
+class CliTestGenerator:
+    def __init__(self, *, model: str, max_output_tokens: int) -> None:
+        self.model = model
+        self.max_output_tokens = max_output_tokens
+
+    def generate(self, *, query: str, context: RetrievedContext) -> str:
+        return "Report the incident immediately [1]."
+
+
 @pytest.fixture
 def fake_local_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "atlasrag.ingestion.sentence_transformer_embedder.SentenceTransformerEmbedder",
         CliTestEmbedder,
+    )
+    monkeypatch.setattr(
+        "atlasrag.answering.openai_generator.OpenAIAnswerGenerator",
+        CliTestGenerator,
     )
 
 
@@ -90,6 +104,27 @@ def test_cli_ingests_then_searches_persisted_document(
         "Reporting procedure",
     ]
     assert "report" in search_output["results"][0]["text"].casefold()
+
+    ask_status = main(
+        [
+            "ask",
+            "What should I do?",
+            "--artifacts",
+            str(artifact_root),
+            "--model",
+            "requested-model",
+            "--top-k",
+            "1",
+            "--max-output-tokens",
+            "123",
+        ]
+    )
+    ask_output = json.loads(capsys.readouterr().out)
+
+    assert ask_status == 0
+    assert ask_output["answer"] == "Report the incident immediately [1]."
+    assert ask_output["model"] == "requested-model"
+    assert ask_output["citations"][0]["label"] == "[1]"
 
 
 def test_cli_reports_missing_artifact_root(
