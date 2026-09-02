@@ -2,6 +2,7 @@ import pytest
 
 from atlasrag.ingestion.identity import (
     calculate_content_sha256,
+    create_chunk_id,
     create_document_id,
     create_document_version_id,
 )
@@ -110,3 +111,94 @@ def test_document_version_id_rejects_malformed_sha256(
 
     with pytest.raises(ValueError):
         create_document_version_id(document_id, content_sha256)
+
+
+def test_chunk_id_is_deterministic() -> None:
+    document_id = create_document_id("local-manifest", "security/policy")
+    version_id = create_document_version_id(
+        document_id,
+        calculate_content_sha256(b"version one"),
+    )
+
+    first = create_chunk_id(version_id, "hybrid-v1:max=200", 0, "Chunk text")
+    second = create_chunk_id(version_id, "hybrid-v1:max=200", 0, "Chunk text")
+
+    assert first == second
+
+
+def test_chunk_id_changes_when_an_identity_input_changes() -> None:
+    document_id = create_document_id("local-manifest", "security/policy")
+    first_version_id = create_document_version_id(
+        document_id,
+        calculate_content_sha256(b"version one"),
+    )
+    second_version_id = create_document_version_id(
+        document_id,
+        calculate_content_sha256(b"version two"),
+    )
+    baseline = create_chunk_id(
+        first_version_id,
+        "hybrid-v1:max=200",
+        0,
+        "Chunk text",
+    )
+
+    changed_values = (
+        create_chunk_id(
+            second_version_id,
+            "hybrid-v1:max=200",
+            0,
+            "Chunk text",
+        ),
+        create_chunk_id(
+            first_version_id,
+            "hybrid-v1:max=100",
+            0,
+            "Chunk text",
+        ),
+        create_chunk_id(
+            first_version_id,
+            "hybrid-v1:max=200",
+            1,
+            "Chunk text",
+        ),
+        create_chunk_id(
+            first_version_id,
+            "hybrid-v1:max=200",
+            0,
+            "Different chunk text",
+        ),
+    )
+
+    assert all(changed != baseline for changed in changed_values)
+    assert len(set(changed_values)) == len(changed_values)
+
+
+@pytest.mark.parametrize(
+    ("chunker_fingerprint", "chunk_index", "contextualized_text"),
+    [
+        ("", 0, "Chunk text"),
+        ("   ", 0, "Chunk text"),
+        ("hybrid-v1:max=200", -1, "Chunk text"),
+        ("hybrid-v1:max=200", 0, ""),
+        ("hybrid-v1:max=200", 0, "   "),
+    ],
+)
+def test_chunk_id_rejects_invalid_inputs(
+    chunker_fingerprint: str,
+    chunk_index: int,
+    contextualized_text: str,
+) -> None:
+    document_id = create_document_id("local-manifest", "security/policy")
+    version_id = create_document_version_id(
+        document_id,
+        calculate_content_sha256(b"version one"),
+    )
+
+    with pytest.raises(ValueError):
+        create_chunk_id(
+            version_id,
+            chunker_fingerprint,
+            chunk_index,
+            contextualized_text,
+        )
